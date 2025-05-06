@@ -1,126 +1,137 @@
-==========================================================================
-PassportEye: Python tools for image processing of identification documents
-==========================================================================
-.. image:: https://travis-ci.org/konstantint/PassportEye.svg?branch=master
-    :target: https://travis-ci.org/konstantint/PassportEye
+# 🛂 PassportEye Deployment & Management Guide
 
-The package provides tools for recognizing machine readable zones (MRZ) from scanned identification documents.
-The documents may be located rather arbitrarily on the page - the code tries to find anything resembling a MRZ 
-and parse it from there.
+本指南介绍如何在 AWS EC2 上部署 PassportEye + FastAPI 项目，并实现服务开机自启、代码更新与日志查看。
 
-The recognition procedure may be rather slow - around 10 or more seconds for some documents. Its precision is
-not perfect, yet seemingly decent as far as test documents available to the developer were concerned - in
-around 80% of the cases, whenever there is a clearly visible MRZ on a page, the system will recognize it and extract the text
-to the best of the abilities of the underlying OCR engine (Google Tesseract).
+---
 
-The failed examples seem to be most often either clearly badly scanned documents, where text is way too blurred, or,
-more seriously, some types of IDs (Romanian being one example), where the MRZ is too close to the remaining part of the card - 
-a situation not accounted for too well by the current algorithm.
-
-Installation
-------------
-
-The simplest way to install the package is via ``pip``::
-
-    $ pip install PassportEye
-
-Note that `PassportEye` depends on `numpy`, `scipy`, `matplotlib` and `scikit-image`, among other things. The installation of those requirements, although automatic,
-may take time or fail sometimes for various reasons (e.g. lack of necessary libraries). If this happens, consider installing the dependencies explicitly from the binary packages, such as those provided by the OS distribution or the "wheel" packages. Another convenient option is to use a Python distribution with pre-packaged `numpy`/`scipy`/`matplotlib` binaries (Anaconda Python being a great choice at the moment).
-
-In addition, you must have the `Tesseract OCR <https://github.com/tesseract-ocr>`_ installed and added to the system path: the ``tesseract`` tool must be 
-accessible at the command line. Note that the most recent version of Tesseract does not by default include its "legacy" model in some installations (e.g. Windows). The legacy model, however
-shows slightly better performance for MRZ text detection according to our tests and is therefore used by default. If the respective model is not installed by default, you should download
-the `eng.traineddata` file [here](https://github.com/tesseract-ocr/tessdata) and replace with it the (smaller) `eng.traineddata` file that came with your installation.
-
-PassportEye requires Python version 3.6 or higher.
-
-Usage
------
-
-On installation, the package installs a standalone tool ``mrz`` into your Python scripts path. Running::
-
-    $ mrz <filename>
-    
-will process a given filename, extracting the MRZ information it finds and printing it out in tabular form.
-Running ``mrz --json <filename>`` will output the same information in JSON. Running ``mrz --save-roi <roi.png>`` will,
-in addition, extract the detected MRZ ("region of interest") into a separate png file for further exploration.
-Note that the tool provides a limited support for PDF files -- it attempts to extract the first DCT-encoded image 
-from the PDF and applies the recognition on it. This seems to work fine with most scanner-produced one-page PDFs, but
-has not been tested extensively.
-
-If your Tesseract installation has the "legacy" ``*.traineddata`` models installed (in its ``tessdata`` directory), consider running::
-
-    $ mrz --legacy <filename>
-
-This will enable the "legacy" recognizer which, despite the name, seems to work better for MRZ recognition. If you do not know
-whether you have the relevant files, just try running the command above and see whether you get an error. 
-
-In order to use the recognition function in Python code, simply do::
-
-    >> from passporteye import read_mrz
-    >> mrz = read_mrz(image_file)
-
-Where image_file can be either a path to a file on disk, or a byte stream containing image data.
-
-The returned object (unless it is None, which means no ROI was detected) contains the fields extracted from the MRZ along
-with some metainformation. For the description of the available fields, see the docstring for the `passporteye.mrz.text.MRZ` class.
-Note that you can convert the object to a dictionary using the ``to_dict()`` method.
-
-If you want to have the ROI reported alongside the MRZ, call the ``read_mrz`` function as follows::
-
-    >> mrz = read_mrz(image_file, save_roi=True)
-
-The ROI can then be accessed as ``mrz.aux['roi']`` -- it is a numpy ndarray, representing the (grayscale) image region where the OCR was applied.
-
-Finally, in order to use the "legacy recognizer", pass the ``--oem 0`` extra command line argument to Tesseract as follows::
-
-    >> mrz = read_mrz(image_file, extra_cmdline_params='--oem 0')
-
-For more flexibility, you may instead use a ``MRZPipeline`` object, which will provide you access to all intermediate computations as follows::
-
-    >> from passporteye.mrz.image import MRZPipeline
-    >> p = MRZPipeline(file, extra_cmdline_params='--oem 0')
-    >> mrz = p.result
-
-The "pipeline" object stores the intermediate computations in its ``data`` dictionary. Although you need to understand the underlying algorithm
-to make sense of it, sometimes it may provide for insightful visualizations. This code, for example, will plot the binarized version of the original image
-which is used in the algorithm to extract ROIs alongside the boxes corresponding to the extracted ROIs::
-
-    >> imshow(p['img_binary'])
-    >> for b in p['boxes']:
-    ..     plot(b.points[:,1], b.points[:,0], c='b')
-    ..     b.plot()
-
-Development
------------
-
-If you plan to develop or debug the package, consider installing it by running::
-
-    $ pip install -e ".[dev]"
-
-This will install the package in "editable" mode and add a couple of useful extras (such as `pytest`). 
-You can then run the tests by typing::
-
-    $ py.test
-    
-At the root of the source distribution.
-
-The command-line script ``evaluate_mrz`` can be used to assess the performance of the current recognition pipeline on a set 
-of sample images: this is useful if you want to see the effects of changes to the code. Just run::
-
-    $ evaluate_mrz -j 4
-
-(where ``-j 4`` would request to use 4 cores in parallel). The same script may be used to run the recognition pipeline on a 
-given directory of images, sorting successes and failures, see ``evaluate_mrz -h`` for options.
+## ✅ 1. 安装与环境准备
+### Ubuntu Server 22.04 LTS (HVM), SSD Volume Type
 
 
-Contributing
-------------
+```bash
+# 1. 创建一个项目目录
+mkdir ~/passporteye-api
+cd ~/passporteye-api
 
-Feel free to contribute or report issues via Github: https://github.com/konstantint/PassportEye
+# 2. 创建 Python 虚拟环境
+python3 -m venv venv
+source venv/bin/activate
 
-Copyright & License
--------------------
+# 3. 安装依赖
+pip install passporteye fastapi uvicorn python-multipart pillow opencv-python-headless
 
-Copyright: 2016, Konstantin Tretyakov.
-License: MIT
+# 4. 创建 main.py（此时你就在 passporteye-api 目录下）
+nano main.py
+```
+
+
+---
+
+## ✅ 2. 测试运行 API
+
+```bash
+# 1. 进入项目目录
+cd ~/passporteye-api
+# 2. 激活虚拟环境
+source venv/bin/activate
+# 3. 直接运行
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+浏览器打开：
+
+```
+http://<EC2_PUBLIC_IP>:8000/docs
+```
+
+---
+
+## ⚙️ 3. 设置 systemd 实现开机自启
+
+### 3.1 创建服务文件
+
+```bash
+sudo nano /etc/systemd/system/passporteye.service
+```
+
+粘贴以下内容（注意路径根据实际调整）：
+
+```ini
+[Unit]
+Description=PassportEye FastAPI Service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/passporteye-api
+ExecStart=/home/ubuntu/passporteye-api/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 3.2 启用并启动服务
+
+```bash
+sudo systemctl daemon-reexec
+sudo systemctl daemon-reload
+sudo systemctl enable passporteye.service
+sudo systemctl start passporteye.service
+```
+
+---
+
+## 🔁 4. 更新代码并重新加载服务
+
+每次修改了 `main.py` 或配置后，运行：
+
+```bash
+sudo systemctl restart passporteye.service
+```
+
+---
+
+## 🧾 5. 查看运行状态和日志
+
+### 查看服务状态：
+
+```bash
+sudo systemctl status passporteye.service
+```
+
+### 查看最新运行日志：
+
+```bash
+journalctl -u passporteye.service -n 50 --no-pager
+```
+
+---
+
+## 🧪 6. API 调用测试
+
+POST 上传接口：
+
+```
+POST http://<EC2_PUBLIC_IP>:8000/extract-mrz
+Content-Type: multipart/form-data
+Body: file = passport.jpg
+```
+
+或访问：
+
+```
+http://<EC2_PUBLIC_IP>:8000/docs
+```
+
+---
+
+## ✅ 7. 项目结构建议
+
+```
+~/passporteye-api/
+├── main.py              # FastAPI 入口
+├── venv/                # 虚拟环境
+├── __pycache__/
+```
